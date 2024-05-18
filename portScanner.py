@@ -10,7 +10,7 @@ BANNER = """
   / /_/ / /_/ /___/ / /__/ /_/ / / / / / / /  __/ /    
  / .___/\____//____/\___/\__,_/_/ /_/_/ /_/\___/_/     
 /_/    
-"""
+\n\nBy @Loki\n"""
 logging.info(60 * "=")
 logging.info("\n" + BANNER + "\n")
 logging.info(60 * "=")
@@ -121,7 +121,7 @@ def main():
     all_results = scan_multiple_targets(targets, ports, args.timeout)
 
     for ip, port, service, banner in all_results:
-        logging.info(f"Port {port} ({service}) is open on {ip}. Banner: {banner}")
+        logging.info(f"Port {port} ({service}) is open on {ip}.")
 
 if __name__ == "__main__":
     main()
