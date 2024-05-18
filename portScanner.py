@@ -1,10 +1,4 @@
-import argparse
-import socket
-import ipaddress
-import concurrent.futures
-import re
-import subprocess
-import logging
+import argparse,socket,ipaddress,concurrent.futures,re,subprocess,logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -80,6 +74,31 @@ def scan_cidr_range(cidr, ports, timeout):
         stored_results.extend(scan_ip(ip, ports, timeout))
     return stored_results
 
+def scan_target(target, ports, timeout):
+    try:
+        if '/' in target:
+            ipaddress.IPv4Network(target)
+            return scan_cidr_range(target, ports, timeout)
+        else:
+            ipaddress.IPv4Address(target)
+            return scan_ip(target, ports, timeout)
+    except ValueError:
+        logging.error(f"Invalid target format: {target}")
+        return []
+
+def scan_multiple_targets(targets, ports, timeout):
+    all_results = []
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_target = {executor.submit(scan_target, target, ports, timeout): target for target in targets}
+        for future in concurrent.futures.as_completed(future_to_target):
+            target = future_to_target[future]
+            try:
+                results = future.result()
+                all_results.extend(results)
+            except Exception as e:
+                logging.error(f"Error scanning target {target}: {e}")
+    return all_results
+
 def parse_ports(port_range):
     try:
         start, end = map(int, port_range.split('-'))
@@ -91,31 +110,18 @@ def parse_ports(port_range):
 
 def main():
     parser = argparse.ArgumentParser(description='Simple port scanner.')
-    parser.add_argument('-T', '--target', type=str, required=True, help='CIDR range or IP address to scan (e.g., 192.168.0.0/24 or 192.168.0.1)')
+    parser.add_argument('-T', '--target', type=str, required=True, help='Comma-separated list of CIDR ranges or IP addresses to scan (e.g., 192.168.0.0/24,192.168.1.1)')
     parser.add_argument('-p', '--ports', type=parse_ports, default='1-1024', help='Port range to scan (default: 1-1024)')
     parser.add_argument('-t', '--timeout', type=float, default=0.5, help='Connection timeout in seconds (default: 0.5)')
     args = parser.parse_args()
 
-    try:
-        if '/' in args.target:
-            ipaddress.IPv4Network(args.target)
-            target_type = 'CIDR'
-        else:
-            ipaddress.IPv4Address(args.target)
-            target_type = 'IP'
-    except ValueError:
-        logging.error("Invalid target format. Please provide a valid CIDR range or IP address.")
-        return
-
+    targets = args.target.split(',')
     ports = args.ports
 
-    if target_type == 'CIDR':
-        stored_results = scan_cidr_range(args.target, ports, args.timeout)
-    else:
-        stored_results = scan_ip(args.target, ports, args.timeout)
+    all_results = scan_multiple_targets(targets, ports, args.timeout)
 
-    for ip, port, service, banner in stored_results:
-        logging.info(f"Port {port} ({service}) is open on {ip}.")
+    for ip, port, service, banner in all_results:
+        logging.info(f"Port {port} ({service}) is open on {ip}. Banner: {banner}")
 
 if __name__ == "__main__":
     main()
