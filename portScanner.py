@@ -4,15 +4,24 @@ import ipaddress
 import concurrent.futures
 import re
 import subprocess
+import logging
 
-print("""
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+BANNER = """
       ____  _____                                 
     ____  / __ \/ ___/_________ _____  ____  ___  _____
    / __ \/ / / /\__ \/ ___/ __ `/ __ \/ __ \/ _ \/ ___/
   / /_/ / /_/ /___/ / /__/ /_/ / / / / / / /  __/ /    
  / .___/\____//____/\___/\__,_/_/ /_/_/ /_/\___/_/     
-/_/    \n""")
-print("Just a Sec!")
+/_/    
+"""
+logging.info(60 * "=")
+logging.info("\n" + BANNER + "\n")
+logging.info(60 * "=")
+logging.info("Just a Sec!")
+
 COMMON_SERVICES = {
     21: "FTP",
     22: "SSH",
@@ -37,20 +46,24 @@ def scan(ip, port, timeout):
                 banner = get_banner(ip, port)
                 return ip, port, service, banner
     except Exception as e:
-        print(f"Error scanning port {port} on {ip}: {e}")
-        return None
+        logging.error(f"Error scanning port {port} on {ip}: {e}")
+    return None
 
 def get_service_name(port):
     return COMMON_SERVICES.get(port, "Unknown")
 
 def get_banner(ip, port):
     try:
-        cmd_output = subprocess.check_output(["timeout", "1", "nc", "-v", "-z", "-n", ip, str(port)], stderr=subprocess.STDOUT, timeout=5)
-        banner = cmd_output.decode('utf-8').strip()
-        return banner
-    except Exception as e:
-        print(f"Error getting banner for port {port} on {ip}: {e}")
-        return "Banner not available"
+        result = subprocess.run(
+            ["nc", "-v", "-z", "-n", ip, str(port)],
+            capture_output=True, text=True, timeout=1
+        )
+        return result.stdout.strip() if result.returncode == 0 else "No banner"
+    except subprocess.TimeoutExpired:
+        logging.error(f"Timeout expired when getting banner for port {port} on {ip}")
+    except subprocess.SubprocessError as e:
+        logging.error(f"Error getting banner for port {port} on {ip}: {e}")
+    return "Banner not available"
 
 def scan_ip(ip, ports, timeout):
     stored_results = []
@@ -63,35 +76,38 @@ def scan_cidr_range(cidr, ports, timeout):
     stored_results = []
     for ip_obj in ipaddress.IPv4Network(cidr):
         ip = str(ip_obj)
+        logging.info(f"Scanning IP: {ip}")
         stored_results.extend(scan_ip(ip, ports, timeout))
     return stored_results
 
+def parse_ports(port_range):
+    try:
+        start, end = map(int, port_range.split('-'))
+        if start < 1 or end > 65535 or start > end:
+            raise ValueError
+        return range(start, end + 1)
+    except ValueError:
+        raise argparse.ArgumentTypeError("Invalid port range. Please use the format 'start-end' within the range 1-65535.")
+
 def main():
     parser = argparse.ArgumentParser(description='Simple port scanner.')
-    parser.add_argument('-T','--target', type=str, help='CIDR range or IP address to scan (e.g., 192.168.0.0/24 or 192.168.0.1)')
-    parser.add_argument('-p', '--ports', type=str, default='1-1024', help='Port range to scan (default: 1-1024)')
+    parser.add_argument('-T', '--target', type=str, required=True, help='CIDR range or IP address to scan (e.g., 192.168.0.0/24 or 192.168.0.1)')
+    parser.add_argument('-p', '--ports', type=parse_ports, default='1-1024', help='Port range to scan (default: 1-1024)')
     parser.add_argument('-t', '--timeout', type=float, default=0.5, help='Connection timeout in seconds (default: 0.5)')
     args = parser.parse_args()
 
     try:
-        if '/' in args.target:  # Check if CIDR notation is used
+        if '/' in args.target:
             ipaddress.IPv4Network(args.target)
             target_type = 'CIDR'
-        else:  # Otherwise, assume it's a single IP address
+        else:
             ipaddress.IPv4Address(args.target)
             target_type = 'IP'
     except ValueError:
-        print("Invalid target format. Please provide a valid CIDR range or IP address.")
+        logging.error("Invalid target format. Please provide a valid CIDR range or IP address.")
         return
 
-    p_range_pattern = re.compile(r'(\d+)-(\d+)')
-    valida = p_range_pattern.search(args.ports.replace(" ", ""))
-    if not valida:
-        print("Invalid port range format. Please try again.")
-        return
-    min_p = int(valida.group(1))
-    max_p = int(valida.group(2))
-    ports = range(min_p, max_p + 1)
+    ports = args.ports
 
     if target_type == 'CIDR':
         stored_results = scan_cidr_range(args.target, ports, args.timeout)
@@ -99,7 +115,7 @@ def main():
         stored_results = scan_ip(args.target, ports, args.timeout)
 
     for ip, port, service, banner in stored_results:
-        print(f"Port {port} ({service}) is open on {ip}. Banner: {banner}")
+        logging.info(f"Port {port} ({service}) is open on {ip}.")
 
 if __name__ == "__main__":
     main()
